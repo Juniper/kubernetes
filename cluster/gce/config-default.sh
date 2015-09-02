@@ -100,3 +100,7 @@ ADMISSION_CONTROL=NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContext
 
 # Optional: if set to true kube-up will automatically check for existing resources and clean them up.
 KUBE_UP_AUTOMATIC_CLEANUP=${KUBE_UP_AUTOMATIC_CLEANUP:-false}
+
+# Contrail settings
+OPENCONTRAIL_PUBLIC_SUBNET="${OPENCONTRAIL_PUBLIC_SUBNET:-10.1.0.0/16}"
+NETWORK_PROVIDER="${NETWORK_PROVIDER:-none}" # opencontrail

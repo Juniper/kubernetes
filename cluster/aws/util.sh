@@ -806,6 +806,8 @@ function kube-up {
     echo "readonly DNS_REPLICAS='${DNS_REPLICAS:-}'"
     echo "readonly DNS_SERVER_IP='${DNS_SERVER_IP:-}'"
     echo "readonly DNS_DOMAIN='${DNS_DOMAIN:-}'"
+    echo "readonly OPENCONTRAIL_PUBLIC_SUBNET='${OPENCONTRAIL_PUBLIC_SUBNET:-}'"
+    echo "readonly NETWORK_PROVIDER='${NETWORK_PROVIDER:-}'"
     echo "readonly ADMISSION_CONTROL='${ADMISSION_CONTROL:-}'"
     echo "readonly MASTER_IP_RANGE='${MASTER_IP_RANGE:-}'"
     echo "readonly KUBELET_TOKEN='${KUBELET_TOKEN}'"

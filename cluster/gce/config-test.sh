@@ -110,3 +110,7 @@ KUBE_UP_AUTOMATIC_CLEANUP=${KUBE_UP_AUTOMATIC_CLEANUP:-false}
 # are pre-installed in the image. Note that currently this logic
 # is only supported in trusty nodes.
 TEST_CLUSTER="${TEST_CLUSTER:-true}"
+
+# Contrail settings
+OPENCONTRAIL_PUBLIC_SUBNET="${OPENCONTRAIL_PUBLIC_SUBNET:-10.1.0.0/16}"
+NETWORK_PROVIDER="${NETWORK_PROVIDER:-none}" # opencontrail
