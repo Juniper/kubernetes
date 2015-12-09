@@ -65,7 +65,7 @@ function set-good-motd() {
 }
 
 function curl-metadata() {
-  curl --fail --silent -H 'Metadata-Flavor: Google' "http://metadata/computeMetadata/v1/instance/attributes/${1}"
+  curl --fail --retry 5 --silent -H 'Metadata-Flavor: Google' "http://metadata/computeMetadata/v1/instance/attributes/${1}"
 }
 
 function set-kube-env() {
@@ -282,13 +282,19 @@ network_provider: '$(echo "$NETWORK_PROVIDER")'
 opencontrail_tag: '$(echo "$OPENCONTRAIL_TAG")'
 opencontrail_kubernetes_tag: '$(echo "$OPENCONTRAIL_KUBERNETES_TAG")'
 opencontrail_public_subnet: '$(echo "$OPENCONTRAIL_PUBLIC_SUBNET")'
+opencontrail_private_subnet: '$(echo "$OPENCONTRAIL_PRIVATE_SUBNET")'
 enable_manifest_url: '$(echo "$ENABLE_MANIFEST_URL" | sed -e "s/'/''/g")'
 manifest_url: '$(echo "$MANIFEST_URL" | sed -e "s/'/''/g")'
 manifest_url_header: '$(echo "$MANIFEST_URL_HEADER" | sed -e "s/'/''/g")'
 num_nodes: $(echo "${NUM_NODES}")
+network_provider_gw_on_minion: '$(echo "$NETWORK_PROVIDER_GATEWAY_ON_MINION")'
 e2e_storage_test_environment: '$(echo "$E2E_STORAGE_TEST_ENVIRONMENT" | sed -e "s/'/''/g")'
 EOF
-
+    if [ -n "${KUBELET_PORT:-}" ]; then
+      cat <<EOF >>/srv/salt-overlay/pillar/cluster-params.sls
+kubelet_port: '$(echo "$KUBELET_PORT" | sed -e "s/'/''/g")'
+EOF
+    fi
     if [ -n "${APISERVER_TEST_ARGS:-}" ]; then
       cat <<EOF >>/srv/salt-overlay/pillar/cluster-params.sls
 apiserver_test_args: '$(echo "$APISERVER_TEST_ARGS" | sed -e "s/'/''/g")'
@@ -577,6 +583,7 @@ EOF
     cat <<EOF >>/etc/salt/minion.d/grains.conf
   kubelet_api_servers: '${KUBELET_APISERVER}'
   cbr-cidr: 10.123.45.0/30
+  network_provider: '${NETWORK_PROVIDER}'
 EOF
   else
     # If the kubelet is running disconnected from a master, give it a fixed
@@ -600,6 +607,19 @@ grains:
   cbr-cidr: 10.123.45.0/30
   cloud: gce
   api_servers: '${KUBERNETES_MASTER_NAME}'
+  network_provider: '${NETWORK_PROVIDER}'
+EOF
+}
+
+# network-provider (Ex:opencontrail)
+function salt-network-provider-gw-role() {
+  cat <<EOF >/etc/salt/minion.d/grains.conf
+grains:
+  roles:
+    - kubernetes-network-provider-gateway
+  cloud: gce
+  api_servers: '${KUBERNETES_MASTER_NAME}'
+  network_provider: '${NETWORK_PROVIDER}'
 EOF
 }
 
@@ -627,8 +647,12 @@ function configure-salt() {
         salt-apiserver-timeout-grain $KUBE_APISERVER_REQUEST_TIMEOUT
     fi
   else
-    salt-node-role
-    salt-docker-opts
+    if [[ "${KUBERNETES_NETWORK_PROVIDER_GATEWAY}" ==  "true" ]]; then
+      salt-network-provider-gw-role
+    else
+      salt-node-role
+      salt-docker-opts
+    fi
   fi
   install-salt
   stop-salt-minion
@@ -661,6 +685,15 @@ if [[ -z "${is_push}" ]]; then
   remove-docker-artifacts
   run-salt
   set-good-motd
+
+  if curl-metadata k8s-user-startup-script > "${INSTALL_DIR}/k8s-user-script.sh"; then
+    user_script=$(cat "${INSTALL_DIR}/k8s-user-script.sh")
+  fi
+  if [[ ! -z ${user_script:-} ]]; then
+    chmod u+x "${INSTALL_DIR}/k8s-user-script.sh"
+    echo "== running user startup script =="
+    "${INSTALL_DIR}/k8s-user-script.sh"
+  fi
   echo "== kube-up node config done =="
 else
   echo "== kube-push node config starting =="

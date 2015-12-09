@@ -479,6 +479,11 @@ function write-node-env {
   build-kube-env false "${KUBE_TEMP}/node-kube-env.yaml"
 }
 
+# network-provider gateway (Ex:opencontrail)
+function write-network-provider-gw-env {
+  build-kube-env false "${KUBE_TEMP}/network-provider-gw-env.yaml"
+}
+
 # Create certificate pairs for the cluster.
 # $1: The public IP for the master.
 #
@@ -518,7 +523,7 @@ function create-certs {
 
   # Note: This was heavily cribbed from make-ca-cert.sh
   (cd "${KUBE_TEMP}"
-    curl -L -O https://storage.googleapis.com/kubernetes-release/easy-rsa/easy-rsa.tar.gz > /dev/null 2>&1
+    curl -L -O --connect-timeout 20 --retry 6 --retry-delay 2 https://storage.googleapis.com/kubernetes-release/easy-rsa/easy-rsa.tar.gz > /dev/null 2>&1
     tar xzf easy-rsa.tar.gz > /dev/null 2>&1
     cd easy-rsa-master/easyrsa3
     ./easyrsa init-pki > /dev/null 2>&1
@@ -738,6 +743,17 @@ function kube-up {
       sleep 2
   done
 
+  if [ "${NETWORK_PROVIDER}" == "opencontrail" ] && [ "${NETWORK_PROVIDER_GATEWAY_ON_MINION}" != true ]; then
+     echo -e "\nCreating $NETWORK_PROVIDER gateway"
+
+     NETWORK_PROVIDER_GW_TAG="${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway"
+     NETWORK_PROVIDER_GW_RESERVED_IP=$(gcloud compute addresses create "${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway-ip" \
+                                  --project "${PROJECT}" \
+                                  --region "${REGION}" -q --format yaml | awk '/^address:/ { print $2 }')
+
+     create-network-provider-gw "${NETWORK_PROVIDER_GW_RESERVED_IP}" "${NETWORK_PROVIDER_GW_TAG}" &
+  fi
+
   echo "Kubernetes cluster created."
 
   export KUBE_CERT="${CERT_DIR}/pki/issued/kubecfg.crt"
@@ -868,6 +884,28 @@ function kube-down {
     minions=( "${minions[@]:10}" )
   done
 
+  # Delete network-provider-gateway (Ex: opencontrail)
+  if [ "$NETWORK_PROVIDER" == opencontrail ]; then
+    if gcloud compute instances describe "${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway" --zone "${ZONE}" --project "${PROJECT}" &>/dev/null; then
+       gcloud compute instances delete \
+      --project "${PROJECT}" \
+      --quiet \
+      --delete-disks all \
+      --zone "${ZONE}" \
+      "${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway"
+    fi
+
+    # Delete network-provider-gateway's reserved IP
+    local REGION=${ZONE%-*}
+    if gcloud compute addresses describe "${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway-ip" --region "${REGION}" --project "${PROJECT}" &>/dev/null; then
+       gcloud compute addresses delete \
+      --project "${PROJECT}" \
+      --region "${REGION}" \
+      --quiet \
+      "${INSTANCE_PREFIX}-${NETWORK_PROVIDER}-gateway-ip"
+    fi
+  fi
+
   # Delete firewall rule for the master.
   if gcloud compute firewall-rules describe --project "${PROJECT}" "${MASTER_NAME}-https" &>/dev/null; then
     gcloud compute firewall-rules delete  \
@@ -894,6 +932,18 @@ function kube-down {
   local TRUNCATED_PREFIX="${INSTANCE_PREFIX:0:26}"
   routes=( $(gcloud compute routes list --project "${PROJECT}" \
     --regexp "${TRUNCATED_PREFIX}-.{8}-.{4}-.{4}-.{4}-.{12}" | awk 'NR >= 2 { print $1 }') )
+  while (( "${#routes[@]}" > 0 )); do
+    echo Deleting routes "${routes[*]::10}"
+    gcloud compute routes delete \
+      --project "${PROJECT}" \
+      --quiet \
+      "${routes[@]::10}"
+    routes=( "${routes[@]:10}" )
+  done
+
+  # Delete route for network-provider-gateway (Ex: opencontrail)
+  routes=( $(gcloud compute routes list --project "${PROJECT}" \
+           | awk 'NR >= 2 { print $1 }' | grep ip-) )
   while (( "${#routes[@]}" > 0 )); do
     echo Deleting routes "${routes[*]::10}"
     gcloud compute routes delete \
@@ -1301,8 +1351,16 @@ NETWORK_PROVIDER: $(yaml-quote ${NETWORK_PROVIDER:-})
 OPENCONTRAIL_TAG: $(yaml-quote ${OPENCONTRAIL_TAG:-})
 OPENCONTRAIL_KUBERNETES_TAG: $(yaml-quote ${OPENCONTRAIL_KUBERNETES_TAG:-})
 OPENCONTRAIL_PUBLIC_SUBNET: $(yaml-quote ${OPENCONTRAIL_PUBLIC_SUBNET:-})
+OPENCONTRAIL_PRIVATE_SUBNET: $(yaml-quote ${OPENCONTRAIL_PRIVATE_SUBNET:-})
+NETWORK_PROVIDER_GATEWAY_ON_MINION: $(yaml-quote ${NETWORK_PROVIDER_GATEWAY_ON_MINION:-false})
+KUBERNETES_NETWORK_PROVIDER_GATEWAY: $(yaml-quote ${KUBERNETES_NETWORK_PROVIDER_GATEWAY:-})
 E2E_STORAGE_TEST_ENVIRONMENT: $(yaml-quote ${E2E_STORAGE_TEST_ENVIRONMENT:-})
 EOF
+  if [ -n "${KUBELET_PORT:-}" ]; then
+    cat >>$file <<EOF
+KUBELET_PORT: $(yaml-quote ${KUBELET_PORT})
+EOF
+  fi
   if [ -n "${KUBE_APISERVER_REQUEST_TIMEOUT:-}" ]; then
     cat >>$file <<EOF
 KUBE_APISERVER_REQUEST_TIMEOUT: $(yaml-quote ${KUBE_APISERVER_REQUEST_TIMEOUT})
@@ -1355,6 +1413,13 @@ EOF
 SCHEDULER_TEST_ARGS: $(yaml-quote ${SCHEDULER_TEST_ARGS})
 EOF
     fi
+elif [[ "${master}" == "false" ]] && [[ "$file" == *"network-provider-gw"* ]]; then
+     echo "Found network-provider-gw in the file $file"
+     cat >>$file <<EOF
+KUBERNETES_MASTER: "false"
+KUBERNETES_NETWORK_PROVIDER_GATEWAY: "true"
+KUBELET_APISERVER: $(yaml-quote ${KUBELET_APISERVER:-})
+EOF
   else
     # Node-only env vars.
     cat >>$file <<EOF
