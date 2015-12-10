@@ -73,7 +73,7 @@ function create-network-provider-gw {
     --zone "${ZONE}" \
     --machine-type "${NODE_SIZE}" \
     --image-project="${NODE_IMAGE_PROJECT}" \
-    --image "${MINION_IMAGE}" \
+    --image "${NODE_IMAGE}" \
     --tags "${2}" \
     --network "${NETWORK}" \
     --scopes "storage-ro,compute-rw,monitoring,logging-write" \
